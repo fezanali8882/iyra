@@ -3,6 +3,9 @@ import { Mic, MicOff, Loader2, Volume2, VolumeX, Keyboard, Send, Trash2, ImagePl
 import { getIyraResponse, getIyraAudio, resetIyraSession } from "./services/geminiService";
 import { processCommand } from "./services/commandService";
 import { LiveSessionManager } from "./services/liveService";
+import { signIn, signOutUser, auth, User } from "./lib/firebase";
+import { saveMessage, loadHistory, clearUserHistory, ChatMessage as HistoryMessage } from "./services/historyService";
+import { onAuthStateChanged } from "firebase/auth";
 import Visualizer from "./components/Visualizer";
 import PermissionModal from "./components/PermissionModal";
 import { playPCM } from "./utils/audioUtils";
@@ -24,24 +27,32 @@ declare global {
 }
 
 export default function App() {
+  const [user, setUser] = useState<User | null>(null);
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
+  const [isSigningIn, setIsSigningIn] = useState(false);
   const [appState, setAppState] = useState<AppState>("idle");
-  const [messages, setMessages] = useState<ChatMessage[]>(() => {
-    const saved = localStorage.getItem("iyra_chat_history");
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error("Failed to parse chat history", e);
-      }
-    }
-    return [];
-  });
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const messagesRef = useRef(messages);
 
   useEffect(() => {
     messagesRef.current = messages;
-    localStorage.setItem("iyra_chat_history", JSON.stringify(messages));
   }, [messages]);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      setUser(currentUser);
+      setIsAuthLoading(false);
+      if (currentUser) {
+        const history = await loadHistory(currentUser.uid);
+        if (history.length > 0) {
+          setMessages(history.map(m => ({ id: m.id, sender: m.sender, text: m.text })));
+        }
+      } else {
+        setMessages([]);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
 
   const [isMuted, setIsMuted] = useState(false);
 
@@ -78,7 +89,12 @@ export default function App() {
     const currentImage = selectedImage;
     setSelectedImage(null);
 
-    setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "user", text: finalTranscript + (currentImage ? " [Image Attached]" : "") }]);
+    const newUserMessage: ChatMessage = { id: Date.now().toString(), sender: "user", text: finalTranscript + (currentImage ? " [Image Attached]" : "") };
+    setMessages((prev) => [...prev, newUserMessage]);
+    
+    if (user) {
+      saveMessage(user.uid, "user", newUserMessage.text);
+    }
     
     // If live session is active and NO image, send text through it
     if (isSessionActive && liveSessionRef.current && !currentImage) {
@@ -95,7 +111,12 @@ export default function App() {
 
     if (commandResult.isBrowserAction) {
       responseText = commandResult.action;
-      setMessages((prev) => [...prev, { id: Date.now().toString() + "-z", sender: "iyra", text: responseText }]);
+      const newIyraMessage: ChatMessage = { id: Date.now().toString() + "-z", sender: "iyra", text: responseText };
+      setMessages((prev) => [...prev, newIyraMessage]);
+      
+      if (user) {
+        saveMessage(user.uid, "iyra", responseText);
+      }
       
       if (!isMuted) {
         setAppState("speaking");
@@ -115,7 +136,12 @@ export default function App() {
     } else {
       // 2. General Chit-Chat via Gemini (with optional image)
       responseText = await getIyraResponse(finalTranscript || "Analyze this trading chart for me.", messagesRef.current, currentImage || undefined);
-      setMessages((prev) => [...prev, { id: Date.now().toString() + "-z", sender: "iyra", text: responseText }]);
+      const newIyraMessage: ChatMessage = { id: Date.now().toString() + "-z", sender: "iyra", text: responseText };
+      setMessages((prev) => [...prev, newIyraMessage]);
+      
+      if (user) {
+        saveMessage(user.uid, "iyra", responseText);
+      }
       
       if (!isMuted) {
         setAppState("speaking");
@@ -149,6 +175,10 @@ export default function App() {
   }, []);
 
   const toggleListening = async () => {
+    if (!user) {
+      alert("Please sign in to talk with Iyra!");
+      return;
+    }
     if (isSessionActive) {
       setIsSessionActive(false);
       if (liveSessionRef.current) {
@@ -164,6 +194,8 @@ export default function App() {
         
         const session = new LiveSessionManager();
         session.isMuted = isMuted;
+        // Pass a summary of the last 10 messages for context in the live session
+        session.historyContext = messages.slice(-10).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join("\n");
         liveSessionRef.current = session;
         
         session.onStateChange = (state) => {
@@ -172,6 +204,9 @@ export default function App() {
         
         session.onMessage = (sender, text) => {
           setMessages((prev) => [...prev, { id: Date.now().toString() + "-" + sender, sender, text }]);
+          if (user) {
+            saveMessage(user.uid, sender, text);
+          }
         };
         
         session.onCommand = (url) => {
@@ -193,6 +228,11 @@ export default function App() {
   const handleTextSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!textInput.trim()) return;
+    
+    if (!user) {
+      alert("Please sign in to talk with Iyra!");
+      return;
+    }
     
     handleTextCommand(textInput);
     setTextInput("");
@@ -222,12 +262,19 @@ export default function App() {
           <h1 className="text-xl font-serif font-medium tracking-wide opacity-90">Iyra</h1>
         </div>
         <div className="flex items-center gap-2">
+          {user && (
+            <div className="hidden md:flex flex-col items-end mr-2">
+              <span className="text-[10px] text-white/50">Logged in as</span>
+              <span className="text-xs font-medium text-pink-400">{user.displayName?.split(' ')[0]}</span>
+            </div>
+          )}
           {messages.length > 0 && (
             <button
-              onClick={() => {
+              onClick={async () => {
                 if (confirm("Are you sure you want to clear the chat history?")) {
                   setMessages([]);
                   resetIyraSession();
+                  if (user) await clearUserHistory(user.uid);
                 }
               }}
               className="p-2 rounded-full bg-white/5 hover:bg-red-500/20 hover:text-red-400 transition-colors border border-white/10"
@@ -247,6 +294,43 @@ export default function App() {
               <Volume2 size={18} className="opacity-70" />
             )}
           </button>
+          {user ? (
+            <button
+              onClick={() => signOutUser()}
+              className="px-3 py-1.5 text-xs rounded-full bg-white/5 border border-white/10 hover:bg-red-500/20 hover:border-red-500/30 transition-colors"
+            >
+              Sign Out
+            </button>
+          ) : (
+            <button
+              onClick={async () => {
+                if (isSigningIn) return;
+                setIsSigningIn(true);
+                try {
+                  await signIn();
+                } catch (error: any) {
+                  if (error.code === 'auth/cancelled-popup-request' || error.code === 'auth/popup-closed-by-user') {
+                    console.log("Sign in cancelled by user or multiple requests.");
+                  } else {
+                    alert("Sign in failed: " + error.message);
+                  }
+                } finally {
+                  setIsSigningIn(false);
+                }
+              }}
+              disabled={isSigningIn}
+              className="px-3 py-1.5 text-xs rounded-full bg-pink-500 hover:bg-pink-600 transition-colors font-medium shadow-lg shadow-pink-500/20 disabled:opacity-50"
+            >
+              {isSigningIn ? (
+                <div className="flex items-center gap-1">
+                  <Loader2 size={12} className="animate-spin" />
+                  <span>Signing In...</span>
+                </div>
+              ) : (
+                "Sign In"
+              )}
+            </button>
+          )}
         </div>
       </header>
 

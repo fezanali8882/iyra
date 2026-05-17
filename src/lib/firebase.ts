@@ -1,0 +1,46 @@
+import { initializeApp } from 'firebase/app';
+import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, User } from 'firebase/auth';
+import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
+import firebaseConfig from '../../firebase-applet-config.json';
+
+const app = initializeApp(firebaseConfig);
+export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+export const auth = getAuth(app);
+export const googleProvider = new GoogleAuthProvider();
+
+export async function testConnection() {
+  try {
+    await getDocFromServer(doc(db, 'test', 'connection'));
+    console.log("Firebase connection successful");
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('the client is offline')) {
+      console.error("Please check your Firebase configuration.");
+    }
+  }
+}
+
+// Helper for Sign In
+export async function signIn() {
+  try {
+    const result = await signInWithPopup(auth, googleProvider);
+    return result.user;
+  } catch (error: any) {
+    if (error.code === 'auth/cancelled-popup-request' || error.code === 'auth/popup-closed-by-user') {
+      // Don't log full error for user-cancelled actions
+      throw error;
+    }
+    console.error("Error signing in with Google", error);
+    throw error;
+  }
+}
+
+// Helper for Sign Out
+export async function signOutUser() {
+  try {
+    await auth.signOut();
+  } catch (error) {
+    console.error("Error signing out", error);
+  }
+}
+
+export type { User };

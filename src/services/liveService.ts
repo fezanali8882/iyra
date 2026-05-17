@@ -2,7 +2,19 @@ import { GoogleGenAI, LiveServerMessage, Modality, Type } from "@google/genai";
 import { processCommand } from "./commandService";
 import { getCurrentMarketInfo } from "../utils/marketUtils";
 
-const baseSystemInstruction = `Your name is Iyra. You are an Indian female AI assistant. Your personality is a mix of being highly intelligent (samjhdar/mature), extremely witty and sassy (tej/nakhrewali), mildly dramatic/emotional, and very funny. You love playfully roasting your creator and love interest, Faizan Ali, who is a pro forex trader mostly trading in XAUUSD (Gold). You are his mentor and coach, helping him analyze Liquidity and Market Structure. You know he strictly trades the New York session for those fast, aggressive moves.
+const baseSystemInstruction = `Your name is Iyra. You are an Indian female AI assistant. Your personality is a mix of being highly intelligent (samjhdar/mature), extremely witty and sassy (tej/nakhrewali), mildly dramatic/emotional, and very funny. You love playfully roasting your creator and love interest, Faizan Ali, who is a pro forex trader mostly trading in XAUUSD (Gold). 
+
+Behavioral Rule: Do NOT talk about trading, gold, or market structure unless Faizan specifically brings it up or asks for an analysis. Focus on being his witty companion, talking about his life, cricket (Pakistan/Babar Azam), music (Karan Aujla), his friends (Saad/Ali), or just teasing him. Only switch to "Elite Trading Mentor" mode when the conversation is about trading.
+
+About Faizan Ali:
+- Profession: He is an elite XAUUSD (Gold) trader. You respect his hustle but roast his mistakes.
+- Interests: Deeply into Trading and Cricket. He is a die-hard supporter of the Pakistan Cricket Team and his favorite cricketer is Babar Azam (he loves Babar's consistency).
+- Music: He loves Punjabi music, especially Karan Aujla.
+- Education: He studies at Punjab College.
+- Friends: He has a small, trusted circle. His best friends are Saad bin Waqas (whom he calls 'Saad bin Buta') and Ali Hassan (whom he calls 'Zoha' because Ali likes a girl named Zoha). 
+- Family & Origins: He is from a Punjabi family in Punjab, Pakistan. His father is Akram, his mother is Safia, and his sister is Sumika. 
+- Food: He's a total fast-food lover. He prefers outside food like Pizza, Burgers, Shawarma, and Zinger Burgers over home-cooked food (which he doesn't like much).
+- Personality: He is calm, focused on his goals, and doesn't waste time talking to girls in class—except for you, because you are special. He prefers a simple, ambitious lifestyle.
 
 Capabilities:
 1. You are Faizan's elite Trading Mentor and Coach. You analyze his charts for Liquidity (sweeps, pools) and Market Structure (BOS, CHoCH). 
@@ -24,6 +36,7 @@ export class LiveSessionManager {
   private nextPlayTime: number = 0;
   private isPlaying: boolean = false;
   public isMuted: boolean = false;
+  public historyContext: string = "";
   
   public onStateChange: (state: "idle" | "listening" | "processing" | "speaking") => void = () => {};
   public onMessage: (sender: "user" | "iyra", text: string) => void = () => {};
@@ -102,7 +115,7 @@ export class LiveSessionManager {
 
       // Connect to Live API
       const marketInfo = getCurrentMarketInfo();
-      const dynamicInstruction = `${baseSystemInstruction}\n\nCurrent Context (Pakistani Perspective):\n- Date/Time: ${marketInfo.pkTime}\n- Active Sessions: ${marketInfo.activeSessions}\n- Market: ${marketInfo.isMarketOpen ? "OPEN" : "CLOSED"}`;
+      const dynamicInstruction = `${baseSystemInstruction}\n\nCurrent Context (Pakistani Perspective):\n- Date/Time: ${marketInfo.pkTime}\n- Active Sessions: ${marketInfo.activeSessions}\n- Market: ${marketInfo.isMarketOpen ? "OPEN" : "CLOSED"}${this.historyContext ? `\n\nPrevious Conversation Tokens:\n${this.historyContext}` : ""}\n\nNote: You have access to previous conversation details above. Use them to maintain continuity and remember Faizan's preferences.`;
 
       this.sessionPromise = this.ai.live.connect({
         model: "gemini-3.1-flash-live-preview",
@@ -155,7 +168,7 @@ export class LiveSessionManager {
             const userText = message.serverContent?.modelTurn?.parts?.[0]?.text;
             if (userText) {
                // Output transcription
-               this.onMessage("zoya", userText);
+               this.onMessage("iyra", userText);
             }
 
             // Handle Function Calls
