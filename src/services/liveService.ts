@@ -50,12 +50,8 @@ export class LiveSessionManager {
   public onCommand: (url: string) => void = () => {};
 
   constructor() {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      console.error("GEMINI_API_KEY is not defined in environment.");
-    }
     this.ai = new GoogleGenAI({ 
-      apiKey: apiKey || "",
+      apiKey: "temporary-key-replaced-in-start",
       httpOptions: {
         headers: {
           'User-Agent': 'aistudio-build',
@@ -68,10 +64,29 @@ export class LiveSessionManager {
     try {
       this.onStateChange("processing");
       
+      // Fetch Live Config from server
+      const configRes = await fetch("/api/live-config");
+      const configData = await configRes.json();
+      const apiKey = configData.apiKey;
+
+      if (!apiKey) {
+        throw new Error("Gemini API Key is missing on the server.");
+      }
+
+      this.ai = new GoogleGenAI({ 
+        apiKey,
+        httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
+      });
+
       // Initialize Audio Contexts
       const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
       this.audioContext = new AudioContextClass({ sampleRate: 16000 });
       this.playbackContext = new AudioContextClass({ sampleRate: 24000 });
+      
+      // Resume contexts (browser policy)
+      if (this.audioContext.state === 'suspended') await this.audioContext.resume();
+      if (this.playbackContext.state === 'suspended') await this.playbackContext.resume();
+
       this.nextPlayTime = this.playbackContext.currentTime;
 
       // Get Microphone

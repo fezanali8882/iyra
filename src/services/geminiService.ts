@@ -51,117 +51,41 @@ You have active GOOGLE SEARCH access. If Faizan asks for prices (Gold, BTC) or N
 
 You also have access to the conversation history below. Use it to remember past sessions and topics you've already discussed with Faizan.`;
 
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      throw new Error("GEMINI_API_KEY is not defined. Please check your secrets in Settings.");
-    }
-
-    const ai = new GoogleGenAI({ 
-      apiKey,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        }
-      }
+    const response = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt,
+        history,
+        imageBase64,
+        systemInstruction: dynamicInstruction
+      })
     });
-    
-    // If there is an image, we use a single multimodal turn
-    if (imageBase64) {
-      // Strip data URL prefix if present
-      const base64Data = imageBase64.includes(",") ? imageBase64.split(",")[1] : imageBase64;
-      const mimeType = imageBase64.includes(":") ? imageBase64.split(":")[1].split(";")[0] : "image/jpeg";
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: {
-          parts: [
-            { text: dynamicInstruction + "\n\nUser Message: " + (prompt || "Analyze this image.") },
-            {
-              inlineData: {
-                mimeType,
-                data: base64Data,
-              },
-            },
-          ],
-        },
-      });
-      return response.text || "Ugh, fine. I have nothing to say about this picture.";
+    if (!response.ok) {
+      const errData = await response.json();
+      throw new Error(errData.error || "Failed to fetch from Gemini API");
     }
 
-    if (!chatSession) {
-      // SLIDING WINDOW MEMORY: Keep only the last 20 messages
-      const recentHistory = (history || []).slice(-20);
-      
-      let formattedHistory: any[] = [];
-      let currentRole = "";
-      let currentText = "";
-
-      for (const msg of recentHistory) {
-        if (!msg || !msg.text) continue;
-        const role = msg.sender === "user" ? "user" : "model";
-        if (role === currentRole) {
-          currentText += "\n" + msg.text;
-        } else {
-          if (currentRole !== "") {
-            formattedHistory.push({ role: currentRole, parts: [{ text: currentText }] });
-          }
-          currentRole = role;
-          currentText = msg.text;
-        }
-      }
-      if (currentRole !== "" && currentText) {
-        formattedHistory.push({ role: currentRole, parts: [{ text: currentText }] });
-      }
-
-      if (formattedHistory.length > 0 && formattedHistory[0].role !== "user") {
-        formattedHistory.shift();
-      }
-
-      chatSession = ai.chats.create({
-        model: "gemini-3-flash-preview",
-        config: {
-          systemInstruction: dynamicInstruction,
-          tools: [{ googleSearch: {} }],
-        },
-        history: formattedHistory,
-      });
-    }
-
-    const response = await chatSession.sendMessage({ message: prompt || "Hello" });
-    return response.text || "Ugh, fine. I have nothing to say.";
+    const data = await response.json();
+    return data.text;
   } catch (error) {
-    console.error("Gemini Error:", error);
-    return "Uff, mera dimaag kharab ho gaya hai. Try again later, Faizan.";
+    console.error("Iyra Response Error:", error);
+    return "Oi Faizan! Mera dimagh system down hai, thoda wait kar (Error calling Gemini API).";
   }
 }
 
 export async function getIyraAudio(text: string): Promise<string | null> {
   try {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) return null;
-
-    const ai = new GoogleGenAI({ 
-      apiKey,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        }
-      }
+    const response = await fetch("/api/tts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text })
     });
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.1-flash-tts-preview",
-      contents: [{ parts: [{ text: text || "Okay" }] }],
-      config: {
-        responseModalities: ["AUDIO"],
-        speechConfig: {
-          voiceConfig: {
-            prebuiltVoiceConfig: { voiceName: "Kore" },
-          },
-        },
-      },
-    });
-    return response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data || null;
+    if (!response.ok) return null;
+    const data = await response.json();
+    return data.audio || null;
   } catch (error) {
     console.error("TTS Error:", error);
     return null;
