@@ -8,6 +8,8 @@
         "sender": { "type": "string", "enum": ["user", "iyra"] },
         "text": { "type": "string" },
         "ownerId": { "type": "string" },
+        "sessionId": { "type": "string" },
+        "deleted": { "type": "boolean" },
         "timestamp": { "type": "string", "format": "date-time" }
       },
       "required": ["sender", "text", "timestamp", "ownerId"]

@@ -18,30 +18,45 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    function isOwner(userId) {
-      return isSignedIn() && request.auth.uid == userId;
+    function isVerified() {
+      // Relaxing for development/Google auth where email_verified might be null in some contexts
+      return isSignedIn(); 
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
     }
 
     function isValidId(id) {
-      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_-]+$');
     }
 
     // --- User Profiles ---
-    match /users/{userId} {
+    match /users/{userAuthId} {
       // Users can only read/write their own profiles
-      allow get: if isOwner(userId);
-      allow create: if isOwner(userId) && isValidId(userId);
-      allow update: if isOwner(userId) && (
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'email', 'updatedAt'])
+      allow get: if isOwner(userAuthId);
+      allow create: if isOwner(userAuthId) && isValidId(userAuthId);
+      allow update: if isOwner(userAuthId) && (
+        incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'email', 'updatedAt', 'ownerId', 'createdAt'])
       );
 
       // --- Messages ---
       match /messages/{messageId} {
         // Users can only read/write their own messages
-        allow list: if isOwner(userId);
-        allow get: if isOwner(userId);
-        allow create: if isOwner(userId) && isValidId(messageId);
-        allow update, delete: if isOwner(userId);
+        allow list: if isOwner(userAuthId);
+        allow get: if isOwner(userAuthId);
+        allow create: if isOwner(userAuthId) && 
+                      incoming().ownerId == request.auth.uid &&
+                      incoming().sender in ['user', 'iyra'];
+        allow update, delete: if isOwner(userAuthId);
       }
     }
   }

@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { Mail, Lock, User as UserIcon, ArrowRight, Loader2, X, AlertCircle } from 'lucide-react';
 import { signIn, signInWithEmail, signUpWithEmail } from '../lib/firebase';
-import { executeRecaptcha } from '../lib/recaptcha';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface AuthModalProps {
@@ -23,7 +22,6 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
     setLoading(true);
     setError(null);
     try {
-      await executeRecaptcha('GOOGLE_LOGIN');
       await signIn();
       onClose();
     } catch (err: any) {
@@ -41,10 +39,8 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
     setError(null);
     try {
       if (mode === 'login') {
-        await executeRecaptcha('LOGIN');
         await signInWithEmail(email, password);
       } else {
-        await executeRecaptcha('SIGNUP');
         await signUpWithEmail(email, password, name);
       }
       onClose();

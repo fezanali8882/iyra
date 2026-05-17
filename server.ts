@@ -13,45 +13,57 @@ async function startServer() {
   app.use(express.json({ limit: '10mb' }));
 
   // API Routes
+  app.get("/api/health", (req, res) => {
+    res.json({ status: "ok", time: new Date().toISOString() });
+  });
+
   app.post("/api/chat", async (req, res) => {
     try {
       const { prompt, history, imageBase64, systemInstruction } = req.body;
       const apiKey = process.env.GEMINI_API_KEY;
 
       if (!apiKey) {
-        return res.status(500).json({ error: "Gemini API Key not configured on server." });
+        console.error("GEMINI_API_KEY is not set on the server.");
+        return res.status(500).json({ error: "Gemini API Key not configured on server. Please add it to environment variables." });
       }
 
-      const genAI = new GoogleGenAI(apiKey);
-      const model = genAI.getGenerativeModel({ 
-        model: "gemini-1.5-flash", 
-        systemInstruction,
-        tools: [{ googleSearch: {} }] 
+      const client = new GoogleGenAI({ 
+        apiKey,
+        httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
       });
 
-      const contents = history.map((msg: any) => ({
+      console.log("Chat request received. Prompt length:", prompt?.length);
+
+      const contents: any[] = (history || []).map((msg: any) => ({
         role: msg.sender === "user" ? "user" : "model",
         parts: [{ text: msg.text }],
       }));
 
-      const parts: any[] = [{ text: prompt }];
+      const currentParts: any[] = [{ text: prompt || "Analyze this." }];
       if (imageBase64) {
-        parts.push({
+        const base64Data = imageBase64.includes(",") ? imageBase64.split(",")[1] : imageBase64;
+        const mimeType = imageBase64.includes(":") ? imageBase64.split(":")[1].split(";")[0] : "image/jpeg";
+        currentParts.push({
           inlineData: {
-            mimeType: "image/jpeg",
-            data: imageBase64.split(",")[1]
+            mimeType,
+            data: base64Data
           }
         });
       }
 
-      const result = await model.generateContent({
-        contents: [...contents, { role: "user", parts }]
-      });
+      const result = await client.models.generateContent({
+        model: "gemini-1.5-flash",
+        systemInstruction,
+        contents: [...contents.slice(-10), { role: "user", parts: currentParts }],
+        config: {
+          tools: [{ googleSearch: {} }]
+        }
+      } as any);
 
-      res.json({ text: result.response.text() });
+      res.json({ text: result.text || "I have nothing much to say about this." });
     } catch (error: any) {
-      console.error("Gemini Error:", error);
-      res.status(500).json({ error: error.message });
+      console.error("Gemini Chat API Error:", error);
+      res.status(500).json({ error: "Gemini API Error: " + error.message });
     }
   });
 
@@ -62,31 +74,38 @@ async function startServer() {
 
       if (!apiKey) return res.status(500).json({ error: "Missing API Key" });
 
-      const genAI = new GoogleGenAI(apiKey);
-      const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+      const client = new GoogleGenAI({ 
+        apiKey,
+        httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
+      });
 
-      const result = await model.generateContent({
+      const result = await client.models.generateContent({
+        model: "gemini-1.5-flash",
         contents: [{ role: "user", parts: [{ text }] }],
-        generationConfig: {
+        config: {
           responseModalities: ["AUDIO"],
           speechConfig: {
             voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } }
           }
-        } as any
+        }
       });
 
-      const audioData = result.response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+      const audioData = result.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
       res.json({ audio: audioData });
     } catch (error: any) {
-      console.error("TTS Error:", error);
+      console.error("Gemini TTS API Error:", error);
       res.status(500).json({ error: error.message });
     }
   });
 
-  // Proxy for getting Live API Config (Still insecure but at least controlled)
+  // Proxy for getting Live API Config
   app.get("/api/live-config", (req, res) => {
-    // In a real app, we would verify the user session here
-    res.json({ apiKey: process.env.GEMINI_API_KEY });
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      console.warn("API Key request failed: GEMINI_API_KEY not set.");
+      return res.status(500).json({ error: "API Key not configured" });
+    }
+    res.json({ apiKey });
   });
 
   // Vite middleware

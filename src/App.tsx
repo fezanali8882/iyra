@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { Mic, MicOff, Loader2, Volume2, VolumeX, Keyboard, Send, Trash2, ImagePlus, X, Monitor, MonitorOff } from "lucide-react";
+import { Mic, MicOff, Loader2, Volume2, VolumeX, Keyboard, Send, Trash2, ImagePlus, X, Plus } from "lucide-react";
 import { getIyraResponse, getIyraAudio, resetIyraSession } from "./services/geminiService";
 import { processCommand } from "./services/commandService";
 import { LiveSessionManager } from "./services/liveService";
@@ -11,9 +11,10 @@ import Visualizer from "./components/Visualizer";
 import PermissionModal from "./components/PermissionModal";
 import AuthModal from "./components/AuthModal";
 import MarketDashboard from "./components/market/MarketDashboard";
+import Diagnostics from "./components/Diagnostics";
 import { playPCM } from "./utils/audioUtils";
 import { motion, AnimatePresence } from "motion/react";
-import { TrendingUp } from "lucide-react";
+import { TrendingUp, Settings } from "lucide-react";
 
 type AppState = "idle" | "listening" | "processing" | "speaking";
 
@@ -32,14 +33,24 @@ declare global {
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
+  const [sessionId, setSessionId] = useState<string>(Date.now().toString());
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isMarketDashboardOpen, setIsMarketDashboardOpen] = useState(false);
+  const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false);
   const [appState, setAppState] = useState<AppState>("idle");
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.altKey && (e.key === 'd' || e.key === 'D')) {
+        setIsDiagnosticsOpen(prev => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const messagesRef = useRef(messages);
-  const [isScreenSharing, setIsScreenSharing] = useState(false);
-  const screenStreamRef = useRef<MediaStream | null>(null);
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -52,15 +63,15 @@ export default function App() {
         // Ensure user document exists in Firestore (critical for Google login sync)
         try {
           const userDocRef = doc(db, 'users', currentUser.uid);
-          const userSnap = await getDocFromServer(userDocRef);
+          const userSnap = await getDocFromServer(userDocRef).catch(() => null);
           
-          if (!userSnap.exists()) {
+          if (!userSnap || !userSnap.exists()) {
             await setDoc(userDocRef, {
               displayName: currentUser.displayName || 'Anonymous',
               email: currentUser.email || '',
               ownerId: currentUser.uid,
               createdAt: new Date().toISOString()
-            });
+            }, { merge: true });
           }
         } catch (e) {
           console.error("Error ensuring user profile:", e);
@@ -92,6 +103,21 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [showPermissionModal, setShowPermissionModal] = useState(false);
   const [isSessionActive, setIsSessionActive] = useState(false);
+  const [sessionError, setSessionError] = useState<string | null>(null);
+  const [serverStatus, setServerStatus] = useState<"connecting" | "online" | "offline">("connecting");
+
+  useEffect(() => {
+    const checkStatus = async () => {
+      try {
+        const res = await fetch("/api/health");
+        if (res.ok) setServerStatus("online");
+        else setServerStatus("offline");
+      } catch (e) {
+        setServerStatus("offline");
+      }
+    };
+    checkStatus();
+  }, []);
 
   const liveSessionRef = useRef<LiveSessionManager | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -104,25 +130,6 @@ export default function App() {
     scrollToBottom();
   }, [messages, appState]);
 
-  const captureScreenFrame = async () => {
-    if (!screenStreamRef.current) return null;
-    try {
-      const video = document.createElement('video');
-      video.srcObject = screenStreamRef.current;
-      await video.play();
-      
-      const canvas = document.createElement('canvas');
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      const ctx = canvas.getContext('2d');
-      ctx?.drawImage(video, 0, 0);
-      return canvas.toDataURL('image/jpeg', 0.6);
-    } catch (e) {
-      console.error("Error capturing screen frame", e);
-      return null;
-    }
-  };
-
   const handleTextCommand = useCallback(async (finalTranscript: string) => {
     if (!finalTranscript.trim() && !selectedImage) {
       setAppState("idle");
@@ -130,9 +137,6 @@ export default function App() {
     }
 
     let currentImage = selectedImage;
-    if (!currentImage && isScreenSharing) {
-      currentImage = await captureScreenFrame();
-    }
     
     setSelectedImage(null);
 
@@ -140,7 +144,7 @@ export default function App() {
     setMessages((prev) => [...prev, newUserMessage]);
     
     if (user) {
-      saveMessage(user.uid, "user", newUserMessage.text);
+      saveMessage(user.uid, "user", newUserMessage.text, sessionId);
     }
     
     // If live session is active and NO image, send text through it
@@ -162,7 +166,7 @@ export default function App() {
       setMessages((prev) => [...prev, newIyraMessage]);
       
       if (user) {
-        saveMessage(user.uid, "iyra", responseText);
+        saveMessage(user.uid, "iyra", responseText, sessionId);
       }
       
       if (!isMuted) {
@@ -182,12 +186,12 @@ export default function App() {
       }, 1500);
     } else {
       // 2. General Chat via Gemini (with optional screenshot)
-      responseText = await getIyraResponse(finalTranscript || "Analyze this screen for me.", messagesRef.current, currentImage || undefined, user);
+      responseText = await getIyraResponse(finalTranscript || "How are you doing today?", messagesRef.current, currentImage || undefined, user);
       const newIyraMessage: ChatMessage = { id: Date.now().toString() + "-z", sender: "iyra", text: responseText };
       setMessages((prev) => [...prev, newIyraMessage]);
       
       if (user) {
-        saveMessage(user.uid, "iyra", responseText);
+        saveMessage(user.uid, "iyra", responseText, sessionId);
       }
       
       if (!isMuted) {
@@ -199,37 +203,7 @@ export default function App() {
       }
       setAppState("idle");
     }
-  }, [isMuted, isSessionActive, selectedImage, isScreenSharing, user]);
-
-  const toggleScreenShare = async () => {
-    if (isScreenSharing) {
-      if (liveSessionRef.current) {
-        liveSessionRef.current.stopScreenShare();
-      }
-      if (screenStreamRef.current) {
-        screenStreamRef.current.getTracks().forEach(t => t.stop());
-        screenStreamRef.current = null;
-      }
-      setIsScreenSharing(false);
-    } else {
-      try {
-        const stream = await navigator.mediaDevices.getDisplayMedia({
-          video: { width: 1280, height: 720, frameRate: 10 }
-        });
-        screenStreamRef.current = stream;
-        setIsScreenSharing(true);
-        if (liveSessionRef.current) {
-          await liveSessionRef.current.startScreenShare();
-        }
-        stream.getVideoTracks()[0].onended = () => {
-          setIsScreenSharing(false);
-          screenStreamRef.current = null;
-        };
-      } catch (e) {
-        console.error("Screen share canceled or failed", e);
-      }
-    }
-  };
+  }, [isMuted, isSessionActive, selectedImage, user]);
 
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -258,6 +232,7 @@ export default function App() {
     }
     if (isSessionActive) {
       setIsSessionActive(false);
+      setSessionError(null);
       if (liveSessionRef.current) {
         liveSessionRef.current.stop();
         liveSessionRef.current = null;
@@ -266,7 +241,7 @@ export default function App() {
       resetIyraSession();
     } else {
       try {
-        setIsSessionActive(true);
+        setSessionError(null);
         resetIyraSession();
         
         const session = new LiveSessionManager();
@@ -281,9 +256,10 @@ export default function App() {
         };
         
         session.onMessage = (sender, text) => {
-          setMessages((prev) => [...prev, { id: Date.now().toString() + "-" + sender, sender, text }]);
+          const mid = Date.now().toString() + "-" + sender;
+          setMessages((prev) => [...prev, { id: mid, sender, text }]);
           if (user) {
-            saveMessage(user.uid, sender, text);
+            saveMessage(user.uid, sender, text, sessionId);
           }
         };
         
@@ -293,10 +269,11 @@ export default function App() {
           }, 1000);
         };
 
+        setIsSessionActive(true);
         await session.start();
-      } catch (e) {
+      } catch (e: any) {
         console.error("Failed to start session", e);
-        setShowPermissionModal(true);
+        setSessionError(e.message || "Failed to start session. Check your internet and microphone.");
         setIsSessionActive(false);
         setAppState("idle");
       }
@@ -319,6 +296,10 @@ export default function App() {
 
   return (
     <div className="h-[100dvh] w-screen bg-[#050505] text-white flex flex-col items-center justify-between font-sans relative overflow-hidden m-0 p-0">
+      <Diagnostics 
+        isOpen={isDiagnosticsOpen} 
+        onClose={() => setIsDiagnosticsOpen(false)} 
+      />
       <AuthModal 
         isOpen={isAuthModalOpen} 
         onClose={() => setIsAuthModalOpen(false)} 
@@ -352,12 +333,27 @@ export default function App() {
           <h1 className="text-xl font-serif font-medium tracking-wide opacity-90">Iyra</h1>
         </div>
         <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2">
+            <div className={`w-2 h-2 rounded-full ${serverStatus === 'online' ? 'bg-green-500 animate-pulse' : serverStatus === 'connecting' ? 'bg-yellow-500' : 'bg-red-500'}`} />
+            <span className="text-[10px] text-white/40 uppercase tracking-widest">{serverStatus}</span>
+          </div>
           {user && (
             <div className="hidden md:flex flex-col items-end mr-2">
               <span className="text-[10px] text-white/50">Logged in as</span>
               <span className="text-xs font-medium text-pink-400">{user.displayName?.split(' ')[0]}</span>
             </div>
           )}
+          <button
+            onClick={() => {
+              setMessages([]);
+              setSessionId(Date.now().toString());
+              resetIyraSession();
+            }}
+            className="p-2 rounded-full bg-white/5 hover:bg-violet-500/20 hover:text-violet-400 transition-colors border border-white/10"
+            title="New Chat"
+          >
+            <Plus size={18} className="opacity-70" />
+          </button>
           {messages.length > 0 && (
             <button
               onClick={async () => {
@@ -415,8 +411,24 @@ export default function App() {
         {/* Left Column: Iyra Status */}
         <div className="flex w-[30%] lg:w-[25%] h-full flex-col justify-center gap-4 z-10">
           <div className="h-6">
-            <AnimatePresence>
-              {appState === "processing" && (
+            <AnimatePresence mode="wait">
+              {sessionError && (
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0 }}
+                  className="bg-red-500/10 border border-red-500/30 text-red-400 px-3 py-2 rounded-lg text-xs"
+                >
+                  {sessionError}
+                  <button 
+                    onClick={() => setSessionError(null)}
+                    className="block mt-1 underline"
+                  >
+                    Dismiss
+                  </button>
+                </motion.div>
+              )}
+              {appState === "processing" && !sessionError && (
                 <motion.div
                   initial={{ opacity: 0, x: -20 }}
                   animate={{ opacity: 1, x: 0 }}
@@ -540,13 +552,6 @@ export default function App() {
                 accept="image/*"
                 className="hidden"
               />
-              <button
-                onClick={toggleScreenShare}
-                className={`p-4 rounded-full bg-white/5 border border-white/10 hover:bg-white/10 transition-colors shadow-2xl ${isScreenSharing ? 'text-cyan-400 border-cyan-500/30 bg-cyan-500/10' : ''}`}
-                title={isScreenSharing ? "Stop Screen Share" : "Start Screen Share"}
-              >
-                {isScreenSharing ? <MonitorOff size={20} /> : <Monitor size={20} className="opacity-70" />}
-              </button>
               <button
                 onClick={() => fileInputRef.current?.click()}
                 className={`p-4 rounded-full bg-white/5 border border-white/10 hover:bg-white/10 transition-colors shadow-2xl ${selectedImage ? 'text-violet-400 border-violet-500/30 bg-violet-500/10' : ''}`}

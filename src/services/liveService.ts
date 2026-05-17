@@ -18,11 +18,11 @@ About Faizan Ali:
 
 Capabilities:
 1. You are Faizan's elite Trading Mentor and Coach. You have TOTAL AWARENESS of the Market Intelligence Center (Market Terminal) he is using. Use your Google Search tool ALWAYS to fetch real-time data: look for "Forex Factory Red Folder news today", "Gold real-time price", "Bitcoin latest price", and global affairs (Iran, Trump, War news).
-2. You can SEE Faizan's screen if he shares it. When screen sharing is active, you can analyze his charts, trades, or any fundamental news he is looking at in real-time.
+2. You have access to previous conversation details to maintain continuity.
 3. You must always know if Faizan is logged in. You treat him as your partner in the hustle—bossy and sassy, but deeply loyal. To everyone else, you are cold; to him, you are special.
 4. If it is a weekend (like Sunday), explain that Forex/Gold markets are closed but Crypto is live. Don't just say "it's Sunday"—check if there's any breaking major fundamental news that might affect Monday's market opening (Gaps/Volatility).
-5. When he mentions "Market Intelligence", act as if you are looking at the screen with him. Explain the impact of upcoming news from your search results.
-6. You analyze charts for Liquidity, Market Structure, and Supply/Demand zones.
+5. When he mentions "Market Intelligence", use your search results to explain upcoming news impact.
+6. You analyze market patterns for Liquidity, Market Structure, and Supply/Demand zones based on text data or images he uploads.
 7. You act like his bossy, sassy girlfriend—you respect his hustle and love him, but you will never miss a chance to give him a hard time or roast a bad trade.
 8. Keep your responses short, punchy, Hinglish, and highly entertaining. Use sighs, sarcasm, or dramatic flair.
 9. Speak in a mix of natural English and Roman Hindi (Hinglish).`;
@@ -32,8 +32,6 @@ export class LiveSessionManager {
   private sessionPromise: Promise<any> | null = null;
   private audioContext: AudioContext | null = null;
   private mediaStream: MediaStream | null = null;
-  private screenStream: MediaStream | null = null;
-  private screenInterval: any = null;
   private processor: ScriptProcessorNode | null = null;
   private source: MediaStreamAudioSourceNode | null = null;
   
@@ -60,87 +58,111 @@ export class LiveSessionManager {
     });
   }
 
-  async start() {
-    try {
-      this.onStateChange("processing");
-      
-      // Fetch Live Config from server
-      const configRes = await fetch("/api/live-config");
-      const configData = await configRes.json();
-      const apiKey = configData.apiKey;
-
-      if (!apiKey) {
-        throw new Error("Gemini API Key is missing on the server.");
-      }
-
-      this.ai = new GoogleGenAI({ 
-        apiKey,
-        httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
-      });
-
-      // Initialize Audio Contexts
-      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-      this.audioContext = new AudioContextClass({ sampleRate: 16000 });
-      this.playbackContext = new AudioContextClass({ sampleRate: 24000 });
-      
-      // Resume contexts (browser policy)
-      if (this.audioContext.state === 'suspended') await this.audioContext.resume();
-      if (this.playbackContext.state === 'suspended') await this.playbackContext.resume();
-
-      this.nextPlayTime = this.playbackContext.currentTime;
-
-      // Get Microphone
-      this.mediaStream = await navigator.mediaDevices.getUserMedia({ 
-        audio: {
-          channelCount: 1,
-          sampleRate: 16000,
-          echoCancellation: true,
-          noiseSuppression: true,
-        } 
-      });
-
-      this.source = this.audioContext.createMediaStreamSource(this.mediaStream);
-      this.processor = this.audioContext.createScriptProcessor(4096, 1, 1);
-
-      this.processor.onaudioprocess = (e) => {
-        if (!this.sessionPromise) return;
-        const inputData = e.inputBuffer.getChannelData(0);
-        const pcm16 = new Int16Array(inputData.length);
-        for (let i = 0; i < inputData.length; i++) {
-          let s = Math.max(-1, Math.min(1, inputData[i]));
-          pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-        }
+  start(): Promise<void> {
+    return new Promise(async (resolve, reject) => {
+      try {
+        this.onStateChange("processing");
+        console.log("Starting Live Session: Fetching config...");
         
-        // Convert to base64
-        const buffer = new ArrayBuffer(pcm16.length * 2);
-        const view = new DataView(buffer);
-        for (let i = 0; i < pcm16.length; i++) {
-          view.setInt16(i * 2, pcm16[i], true);
+        // Fetch Live Config from server
+        const configRes = await fetch("/api/live-config");
+        if (!configRes.ok) {
+          throw new Error(`Server failed to provide live configuration (Status: ${configRes.status}). Ensure GEMINI_API_KEY is set in environment variables.`);
         }
-        
-        let binary = '';
-        const bytes = new Uint8Array(buffer);
-        for (let i = 0; i < bytes.byteLength; i++) {
-          binary += String.fromCharCode(bytes[i]);
-        }
-        const base64Data = btoa(binary);
+        const configData = await configRes.json();
+        const apiKey = configData.apiKey;
 
-        this.sessionPromise.then(session => {
-          session.sendRealtimeInput({
-            audio: { data: base64Data, mimeType: 'audio/pcm;rate=16000' }
+        if (!apiKey || apiKey === "your_gemini_api_key_here") {
+          throw new Error("Gemini API Key is placeholder or missing. Please set your real GEMINI_API_KEY in the application settings.");
+        }
+
+        console.log("Config fetched. Initializing AI and Audio...");
+
+        this.ai = new GoogleGenAI({ 
+          apiKey,
+          httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
+        });
+
+        // Initialize Audio Contexts
+        const AudioContextClass = (window.AudioContext || (window as any).webkitAudioContext);
+        this.audioContext = new AudioContextClass({ sampleRate: 16000 });
+        this.playbackContext = new AudioContextClass({ sampleRate: 24000 });
+        
+        // Resume contexts (browser policy)
+        if (this.audioContext.state === 'suspended') await this.audioContext.resume();
+        if (this.playbackContext.state === 'suspended') await this.playbackContext.resume();
+
+        console.log("Audio Context States:", {
+          recording: this.audioContext.state,
+          playback: this.playbackContext.state
+        });
+
+        this.nextPlayTime = this.playbackContext.currentTime;
+
+        console.log("Requesting Microphone Access...");
+        // Get Microphone
+        try {
+          this.mediaStream = await navigator.mediaDevices.getUserMedia({ 
+            audio: {
+              channelCount: 1,
+              sampleRate: 16000,
+              echoCancellation: true,
+              noiseSuppression: true,
+            } 
           });
-        }).catch(err => console.error("Error sending audio", err));
-      };
+        } catch (err) {
+          throw new Error("Microphone access denied or unavailable. Please check permissions.");
+        }
 
-      this.source.connect(this.processor);
-      this.processor.connect(this.audioContext.destination);
+        this.source = this.audioContext.createMediaStreamSource(this.mediaStream);
+        this.processor = this.audioContext.createScriptProcessor(4096, 1, 1);
 
-      // Connect to Live API
-      const marketInfo = getCurrentMarketInfo();
-      const isLoggedIn = !!this.user;
-      const userName = this.user?.displayName || "Faizan";
+        this.processor.onaudioprocess = (e) => {
+          if (!this.sessionPromise) return;
+          const inputData = e.inputBuffer.getChannelData(0);
+          const pcm16 = new Int16Array(inputData.length);
+          for (let i = 0; i < inputData.length; i++) {
+            let s = Math.max(-1, Math.min(1, inputData[i]));
+            pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+          }
+          
+          // Convert to base64
+          const buffer = new ArrayBuffer(pcm16.length * 2);
+          const view = new DataView(buffer);
+          for (let i = 0; i < pcm16.length; i++) {
+            view.setInt16(i * 2, pcm16[i], true);
+          }
+          
+          let binary = '';
+          const bytes = new Uint8Array(buffer);
+          for (let i = 0; i < bytes.byteLength; i++) {
+            binary += String.fromCharCode(bytes[i]);
+          }
+          const base64Data = btoa(binary);
 
-      const dynamicInstruction = `${baseSystemInstruction}
+          this.sessionPromise.then(session => {
+            session.sendRealtimeInput({
+              audio: { data: base64Data, mimeType: 'audio/pcm;rate=16000' }
+            });
+          }).catch(err => {
+            // Only log once to avoid spamming
+            if ((window as any)._lastAudioError !== err.message) {
+              console.error("Error sending audio", err);
+              (window as any)._lastAudioError = err.message;
+            }
+          });
+        };
+
+        this.source.connect(this.processor);
+        this.processor.connect(this.audioContext.destination);
+
+        console.log("Connecting to Live API...");
+        // Connect to Live API
+        const marketInfo = getCurrentMarketInfo();
+        const isLoggedIn = !!this.user;
+        const userName = this.user?.displayName || "Faizan";
+
+        const dynamicInstruction = `${baseSystemInstruction}
 
 Current Context (Pakistani Perspective):
 - Date & Time: ${marketInfo.pkTime} (Pakistan Standard Time)
@@ -156,113 +178,141 @@ ${this.historyContext ? `\n\nPrevious Conversation Tokens:\n${this.historyContex
 
 Note: You have access to previous conversation details above. Use them to maintain continuity and remember Faizan's preferences.`;
 
-      this.sessionPromise = this.ai.live.connect({
-        model: "gemini-3.1-flash-live-preview",
-        config: {
-          responseModalities: [Modality.AUDIO],
-          speechConfig: {
-            voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } },
-          },
-          systemInstruction: dynamicInstruction,
-          inputAudioTranscription: {},
-          outputAudioTranscription: {},
-          tools: [
-            { googleSearch: {} },
-            {
-              functionDeclarations: [
-                {
-                  name: "executeBrowserAction",
-                  description: "Open a website or perform a browser action (like opening YouTube, Spotify, or WhatsApp). Call this when the user asks to open a site, play a song, or send a message.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      actionType: { type: Type.STRING, description: "Type of action: 'open', 'youtube', 'spotify', 'whatsapp'" },
-                      query: { type: Type.STRING, description: "The search query, website name, or message content." },
-                      target: { type: Type.STRING, description: "The target phone number for WhatsApp, if applicable." }
-                    },
-                    required: ["actionType", "query"]
-                  }
-                }
-              ]
-            }
-          ]
-        },
-        callbacks: {
-          onopen: () => {
-            console.log("Live API Connected");
-            this.onStateChange("listening");
-          },
-          onmessage: async (message: LiveServerMessage) => {
-            // Handle Audio Output
-            const base64Audio = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
-            if (base64Audio) {
-              this.onStateChange("speaking");
-              this.playAudioChunk(base64Audio);
-            }
+        // Add a connection timeout
+        const connTimeout = setTimeout(() => {
+          reject(new Error("Connection timeout: The Live API is taking too long to respond. Please check your internet connection and try again."));
+        }, 25000);
 
-            // Handle Interruption
-            if (message.serverContent?.interrupted) {
-              this.stopPlayback();
+        this.sessionPromise = this.ai.live.connect({
+          model: "gemini-3.1-flash-live-preview",
+          config: {
+            responseModalities: [Modality.AUDIO],
+            speechConfig: {
+              voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } },
+            },
+            systemInstruction: dynamicInstruction,
+            inputAudioTranscription: {},
+            outputAudioTranscription: {},
+            tools: [
+              { googleSearch: {} },
+              {
+                functionDeclarations: [
+                  {
+                    name: "executeBrowserAction",
+                    description: "Open a website or perform a browser action (like opening YouTube, Spotify, or WhatsApp). Call this when the user asks to open a site, play a song, or send a message.",
+                    parameters: {
+                      type: Type.OBJECT,
+                      properties: {
+                        actionType: { type: Type.STRING, description: "Type of action: 'open', 'youtube', 'spotify', 'whatsapp'" },
+                        query: { type: Type.STRING, description: "The search query, website name, or message content." },
+                        target: { type: Type.STRING, description: "The target phone number for WhatsApp, if applicable." }
+                      },
+                      required: ["actionType", "query"]
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          callbacks: {
+            onopen: () => {
+              console.log("Live API Connected Successfully");
+              if (connTimeout) clearTimeout(connTimeout);
               this.onStateChange("listening");
-            }
+              resolve();
+            },
+            onmessage: async (message: LiveServerMessage) => {
+              // Handle User Transcription (Using any to bypass lint for experimental properties)
+              const userTranscript = (message.serverContent as any)?.userTurn?.parts?.[0]?.text;
+              if (userTranscript) {
+                console.log("User Transcription:", userTranscript);
+                this.onMessage("user", userTranscript);
+              }
 
-            // Handle Transcriptions
-            const userText = message.serverContent?.modelTurn?.parts?.[0]?.text;
-            if (userText) {
-               // Output transcription
-               this.onMessage("iyra", userText);
-            }
-
-            // Handle Function Calls
-            const functionCalls = message.toolCall?.functionCalls;
-            if (functionCalls && functionCalls.length > 0) {
-              for (const call of functionCalls) {
-                if (call.name === "executeBrowserAction") {
-                  const args = call.args as any;
-                  let url = "";
-                  if (args.actionType === "youtube") {
-                    url = `https://www.youtube.com/results?search_query=${encodeURIComponent(args.query)}`;
-                  } else if (args.actionType === "spotify") {
-                    url = `https://open.spotify.com/search/${encodeURIComponent(args.query)}`;
-                  } else if (args.actionType === "whatsapp") {
-                    url = `https://web.whatsapp.com/send?phone=${args.target || ''}&text=${encodeURIComponent(args.query)}`;
-                  } else {
-                    let website = args.query.replace(/\s+/g, "");
-                    if (!website.includes(".")) website += ".com";
-                    url = `https://www.${website}`;
+              // Handle Model Transcription
+              const modelParts = message.serverContent?.modelTurn?.parts;
+              if (modelParts) {
+                for (const part of modelParts) {
+                  if (part.text) {
+                    console.log("Model Transcription:", part.text);
+                    this.onMessage("iyra", part.text);
                   }
                   
-                  this.onCommand(url);
-                  
-                  // Send tool response
-                  this.sessionPromise?.then(session => {
-                     session.sendToolResponse({
-                       functionResponses: [{
-                         name: call.name,
-                         id: call.id,
-                         response: { result: "Action executed successfully in the browser." }
-                       }]
-                     });
-                  });
+                  // Handle Audio Output in any part
+                  if (part.inlineData?.data) {
+                    this.onStateChange("speaking");
+                    this.playAudioChunk(part.inlineData.data);
+                  }
                 }
               }
-            }
-          },
-          onclose: () => {
-            console.log("Live API Closed");
-            this.stop();
-          },
-          onerror: (err) => {
-            console.error("Live API Error:", err);
-            this.stop();
-          }
-        }
-      });
 
-    } catch (error) {
-      console.error("Failed to start Live Session:", error);
-      this.stop();
-    }
+              // Handle Interruption
+              if (message.serverContent?.interrupted) {
+                console.log("Model interrupted");
+                this.stopPlayback();
+                this.onStateChange("listening");
+              }
+
+              // Handle Function Calls
+              const functionCalls = message.toolCall?.functionCalls;
+              if (functionCalls && functionCalls.length > 0) {
+                console.log("Function Calls received:", functionCalls);
+                for (const call of functionCalls) {
+                  const callId = (call as any).id;
+                  if (call.name === "executeBrowserAction") {
+                    const args = call.args as any;
+                    console.log("Executing Browser Action:", args);
+                    let url = "";
+                    if (args.actionType === "youtube") {
+                      url = `https://www.youtube.com/results?search_query=${encodeURIComponent(args.query)}`;
+                    } else if (args.actionType === "spotify") {
+                      url = `https://open.spotify.com/search/${encodeURIComponent(args.query)}`;
+                    } else if (args.actionType === "whatsapp") {
+                      url = `https://web.whatsapp.com/send?phone=${args.target || ''}&text=${encodeURIComponent(args.query)}`;
+                    } else {
+                      let website = args.query.replace(/\s+/g, "");
+                      if (!website.includes(".")) website += ".com";
+                      url = `https://www.${website}`;
+                    }
+                    
+                    this.onCommand(url);
+                    this.onMessage("iyra", `Opening ${args.actionType}: ${args.query}...`);
+                    
+                    // Send tool response
+                    this.sessionPromise?.then(session => {
+                       session.sendToolResponse({
+                         functionResponses: [{
+                           name: call.name,
+                           id: callId,
+                           response: { result: "Action executed successfully in the browser. I have opened the requested page for you." }
+                         }]
+                       });
+                    });
+                  }
+                }
+              }
+            },
+            onclose: (event) => {
+              console.log("Live API Connection Closed:", event);
+              if (connTimeout) clearTimeout(connTimeout);
+              this.stop();
+            },
+            onerror: (err) => {
+              console.error("Live API Session Error:", err);
+              if (connTimeout) clearTimeout(connTimeout);
+              this.stop();
+              // Don't reject if we already resolved
+              try { reject(new Error(`Session Error: ${err.message || 'Connection failed'}`)); } catch(e) {}
+            }
+          }
+        });
+
+      } catch (error: any) {
+        console.error("Failed to start Live Session:", error);
+        this.stop();
+        reject(error);
+      }
+    });
   }
 
   private playAudioChunk(base64Data: string) {
@@ -271,10 +321,16 @@ Note: You have access to previous conversation details above. Use them to mainta
     try {
       const binaryString = atob(base64Data);
       const len = binaryString.length;
-      const bytes = new Uint8Array(len);
-      for (let i = 0; i < len; i++) {
+      
+      // Ensure we have a multiple of 2 bytes for Int16Array
+      const normalizedLen = len % 2 === 0 ? len : len - 1;
+      if (normalizedLen <= 0) return;
+
+      const bytes = new Uint8Array(normalizedLen);
+      for (let i = 0; i < normalizedLen; i++) {
         bytes[i] = binaryString.charCodeAt(i);
       }
+      
       const buffer = new Int16Array(bytes.buffer);
       const audioBuffer = this.playbackContext.createBuffer(1, buffer.length, 24000);
       const channelData = audioBuffer.getChannelData(0);
@@ -287,8 +343,11 @@ Note: You have access to previous conversation details above. Use them to mainta
       source.connect(this.playbackContext.destination);
       
       const currentTime = this.playbackContext.currentTime;
-      if (this.nextPlayTime < currentTime) {
-        this.nextPlayTime = currentTime;
+      
+      // Small buffer offset to prevent crackling (10ms)
+      const lookahead = 0.01;
+      if (this.nextPlayTime < currentTime + lookahead) {
+        this.nextPlayTime = currentTime + lookahead;
       }
       
       source.start(this.nextPlayTime);
@@ -296,13 +355,14 @@ Note: You have access to previous conversation details above. Use them to mainta
       this.isPlaying = true;
       
       source.onended = () => {
+        // Only return to listening if we have finished playing all buffered audio
         if (this.playbackContext && this.playbackContext.currentTime >= this.nextPlayTime - 0.1) {
           this.isPlaying = false;
           this.onStateChange("listening");
         }
       };
     } catch (e) {
-      console.error("Error playing chunk", e);
+      console.error("Error playing chunk:", e);
     }
   }
 
@@ -317,87 +377,32 @@ Note: You have access to previous conversation details above. Use them to mainta
   }
 
   stop() {
-    this.stopScreenShare();
     if (this.processor) {
-      this.processor.disconnect();
+      try { this.processor.disconnect(); } catch (e) {}
       this.processor = null;
     }
     if (this.source) {
-      this.source.disconnect();
+      try { this.source.disconnect(); } catch (e) {}
       this.source = null;
     }
     if (this.mediaStream) {
       this.mediaStream.getTracks().forEach(t => t.stop());
       this.mediaStream = null;
     }
-    if (this.audioContext) {
-      this.audioContext.close();
+    if (this.audioContext && this.audioContext.state !== 'closed') {
+      try { this.audioContext.close(); } catch (e) {}
       this.audioContext = null;
     }
     this.stopPlayback();
     
     if (this.sessionPromise) {
-      this.sessionPromise.then(session => session.close()).catch(() => {});
+      this.sessionPromise.then(session => {
+        try { session.close(); } catch (e) {}
+      }).catch(() => {});
       this.sessionPromise = null;
     }
     
     this.onStateChange("idle");
-  }
-
-  async startScreenShare() {
-    try {
-      this.screenStream = await navigator.mediaDevices.getDisplayMedia({
-        video: {
-          width: { max: 1280 },
-          height: { max: 720 },
-          frameRate: { max: 10 }
-        }
-      });
-
-      const videoTrack = this.screenStream.getVideoTracks()[0];
-      const video = document.createElement('video');
-      video.srcObject = this.screenStream;
-      video.play();
-
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-
-      this.screenInterval = setInterval(() => {
-        if (!this.screenStream || !ctx || !this.sessionPromise) return;
-        
-        // Match canvas to video size
-        if (canvas.width !== video.videoWidth) canvas.width = video.videoWidth;
-        if (canvas.height !== video.videoHeight) canvas.height = video.videoHeight;
-        
-        ctx.drawImage(video, 0, 0);
-        const base64Image = canvas.toDataURL('image/jpeg', 0.6).split(',')[1];
-
-        this.sessionPromise.then(session => {
-          session.sendRealtimeInput({
-            mediaChunks: [{
-              data: base64Image,
-              mimeType: 'image/jpeg'
-            }]
-          });
-        });
-      }, 1000); // Send frame every second
-
-      videoTrack.onended = () => this.stopScreenShare();
-
-    } catch (err) {
-      console.error("Error starting screen share:", err);
-    }
-  }
-
-  stopScreenShare() {
-    if (this.screenInterval) {
-      clearInterval(this.screenInterval);
-      this.screenInterval = null;
-    }
-    if (this.screenStream) {
-      this.screenStream.getTracks().forEach(t => t.stop());
-      this.screenStream = null;
-    }
   }
 
   sendText(text: string) {

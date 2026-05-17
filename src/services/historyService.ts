@@ -67,14 +67,16 @@ export interface ChatMessage {
   timestamp?: any;
 }
 
-export async function saveMessage(userId: string, sender: "user" | "iyra", text: string) {
+export async function saveMessage(userId: string, sender: "user" | "iyra", text: string, sessionId: string = "default") {
   const path = `users/${userId}/messages`;
   try {
     await addDoc(collection(db, path), {
       sender,
       text,
       ownerId: userId,
-      timestamp: serverTimestamp()
+      sessionId,
+      timestamp: serverTimestamp(),
+      deleted: false
     });
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
@@ -87,17 +89,34 @@ export async function loadHistory(userId: string): Promise<ChatMessage[]> {
     const q = query(
       collection(db, path),
       where("ownerId", "==", userId),
-      orderBy("timestamp", "asc"),
+      where("deleted", "==", false),
+      orderBy("timestamp", "desc"),
       limit(100)
     );
     const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    })) as ChatMessage[];
+    return querySnapshot.docs
+      .map(doc => ({ id: doc.id, ...doc.data() } as ChatMessage))
+      .reverse();
   } catch (error) {
-    handleFirestoreError(error, OperationType.LIST, path);
-    return [];
+    // If getting an error about the index not existing yet, fallback to a simpler query
+    try {
+      const qFallback = query(
+        collection(db, path),
+        orderBy("timestamp", "desc"),
+        limit(100)
+      );
+      const snap = await getDocs(qFallback);
+      return snap.docs
+        .map(doc => ({ id: doc.id, ...doc.data() } as ChatMessage))
+        .filter(m => {
+          const data = m as any;
+          return !data.deleted && (!data.ownerId || data.ownerId === userId);
+        })
+        .reverse();
+    } catch (e) {
+      handleFirestoreError(error, OperationType.LIST, path);
+      return [];
+    }
   }
 }
 
