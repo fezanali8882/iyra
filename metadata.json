@@ -1,0 +1,7 @@
+{
+  "name": "Iyra - Faizan's Trading Mentor",
+  "description": "A sassy, witty Indian AI trading coach and mentor for Faizan Ali, the XAUUSD liquidity specialist.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
