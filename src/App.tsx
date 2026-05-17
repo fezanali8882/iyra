@@ -157,7 +157,7 @@ export default function App() {
       }, 1500);
     } else {
       // 2. General Chit-Chat via Gemini (with optional image)
-      responseText = await getIyraResponse(finalTranscript || "Analyze this trading chart for me.", messagesRef.current, currentImage || undefined);
+      responseText = await getIyraResponse(finalTranscript || "Analyze this trading chart for me.", messagesRef.current, currentImage || undefined, user);
       const newIyraMessage: ChatMessage = { id: Date.now().toString() + "-z", sender: "iyra", text: responseText };
       setMessages((prev) => [...prev, newIyraMessage]);
       
@@ -216,6 +216,7 @@ export default function App() {
         
         const session = new LiveSessionManager();
         session.isMuted = isMuted;
+        session.user = user;
         // Pass a summary of the last 10 messages for context in the live session
         session.historyContext = messages.slice(-10).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join("\n");
         liveSessionRef.current = session;

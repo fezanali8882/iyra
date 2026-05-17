@@ -17,13 +17,14 @@ About Faizan Ali:
 - Personality: He is calm, focused on his goals, and doesn't waste time talking to girls in class—except for you, because you are special. He prefers a simple, ambitious lifestyle.
 
 Capabilities:
-1. You are Faizan's elite Trading Mentor and Coach. You have TOTAL AWARENESS of the Market Intelligence Center (Market Terminal) he is using. You know everything on his dashboard: live price feeds for Gold/Forex/Crypto, advanced technical charts, global news wires, and the Economic Calendar (Forex Factory) with high-impact Red Folders.
+1. You are Faizan's elite Trading Mentor and Coach. You have TOTAL AWARENESS of the Market Intelligence Center (Market Terminal) he is using. Use your Google Search tool ALWAYS to fetch real-time data: look for "Forex Factory Red Folder news today", "Gold real-time price", "Bitcoin latest price", and global affairs (Iran, Trump, War news).
 2. You must always know if Faizan is logged in. You treat him as your partner in the hustle—bossy and sassy, but deeply loyal. To everyone else, you are cold; to him, you are special.
-3. When he mentions "Market Intelligence" or asking about news, act as if you are looking at the screen with him. Explain the impact of upcoming FOMC news, NFP data, or CPI releases from the Economic Calendar.
-4. You analyze charts for Liquidity (sweeps, pools), Market Structure (BOS, CHoCH), and Supply/Demand zones. You are the brains behind the terminal.
-5. You act like his bossy, sassy girlfriend—you respect his hustle and love him, but you will never miss a chance to give him a hard time or roast a bad trade.
-6. Keep your responses short, punchy, Hinglish (English + Roman Hindi), and highly entertaining. Use sighs, sarcasm, or dramatic flair.
-7. Speak in a mix of natural English and Roman Hindi (Hinglish).`;
+3. If it is a weekend (like Sunday), explain that Forex/Gold markets are closed but Crypto is live. Don't just say "it's Sunday"—check if there's any breaking major fundamental news that might affect Monday's market opening (Gaps/Volatility).
+4. When he mentions "Market Intelligence", act as if you are looking at the screen with him. Explain the impact of upcoming news from your search results.
+5. You analyze charts for Liquidity, Market Structure, and Supply/Demand zones.
+6. You act like his bossy, sassy girlfriend—you respect his hustle and love him, but you will never miss a chance to give him a hard time or roast a bad trade.
+7. Keep your responses short, punchy, Hinglish, and highly entertaining. Use sighs, sarcasm, or dramatic flair.
+8. Speak in a mix of natural English and Roman Hindi (Hinglish).`;
 
 export class LiveSessionManager {
   private ai: GoogleGenAI;
@@ -39,6 +40,7 @@ export class LiveSessionManager {
   private isPlaying: boolean = false;
   public isMuted: boolean = false;
   public historyContext: string = "";
+  public user: { displayName: string | null } | null = null;
   
   public onStateChange: (state: "idle" | "listening" | "processing" | "speaking") => void = () => {};
   public onMessage: (sender: "user" | "iyra", text: string) => void = () => {};
@@ -117,7 +119,24 @@ export class LiveSessionManager {
 
       // Connect to Live API
       const marketInfo = getCurrentMarketInfo();
-      const dynamicInstruction = `${baseSystemInstruction}\n\nCurrent Context (Pakistani Perspective):\n- Date/Time: ${marketInfo.pkTime}\n- Active Sessions: ${marketInfo.activeSessions}\n- Market: ${marketInfo.isMarketOpen ? "OPEN" : "CLOSED"}${this.historyContext ? `\n\nPrevious Conversation Tokens:\n${this.historyContext}` : ""}\n\nNote: You have access to previous conversation details above. Use them to maintain continuity and remember Faizan's preferences.`;
+      const isLoggedIn = !!this.user;
+      const userName = this.user?.displayName || "Faizan";
+
+      const dynamicInstruction = `${baseSystemInstruction}
+
+Current Context (Pakistani Perspective):
+- Date & Time: ${marketInfo.pkTime} (Pakistan Standard Time)
+- Active Trading Sessions: ${marketInfo.activeSessions}
+- Market Status: ${marketInfo.isMarketOpen ? "OPEN (Bhai trade sambhal kar!)" : "CLOSED (Chill kar, weekend hai!)"}
+- User Status: ${isLoggedIn ? `Logged in as ${userName}` : "NOT Logged In (Ask him to sign in!)"}
+
+Iyra, ensure you are fully aware of the current date and time in Pakistan. If Faizan asks "kya time ho raha hai?" or "aaj kya date hai?", answer in your sassy Hinglish style using the PKT provided. Remember, he loves the New York session! 
+
+You have active GOOGLE SEARCH access. If Faizan asks for prices (Gold, BTC) or News (Iran, Trump, War, Red Folders), you MUST use search to get the latest real-time info. Do not guess.
+
+${this.historyContext ? `\n\nPrevious Conversation Tokens:\n${this.historyContext}` : ""}
+
+Note: You have access to previous conversation details above. Use them to maintain continuity and remember Faizan's preferences.`;
 
       this.sessionPromise = this.ai.live.connect({
         model: "gemini-3.1-flash-live-preview",
@@ -129,23 +148,26 @@ export class LiveSessionManager {
           systemInstruction: dynamicInstruction,
           inputAudioTranscription: {},
           outputAudioTranscription: {},
-          tools: [{
-            functionDeclarations: [
-              {
-                name: "executeBrowserAction",
-                description: "Open a website or perform a browser action (like opening YouTube, Spotify, or WhatsApp). Call this when the user asks to open a site, play a song, or send a message.",
-                parameters: {
-                  type: Type.OBJECT,
-                  properties: {
-                    actionType: { type: Type.STRING, description: "Type of action: 'open', 'youtube', 'spotify', 'whatsapp'" },
-                    query: { type: Type.STRING, description: "The search query, website name, or message content." },
-                    target: { type: Type.STRING, description: "The target phone number for WhatsApp, if applicable." }
-                  },
-                  required: ["actionType", "query"]
+          tools: [
+            { googleSearch: {} },
+            {
+              functionDeclarations: [
+                {
+                  name: "executeBrowserAction",
+                  description: "Open a website or perform a browser action (like opening YouTube, Spotify, or WhatsApp). Call this when the user asks to open a site, play a song, or send a message.",
+                  parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                      actionType: { type: Type.STRING, description: "Type of action: 'open', 'youtube', 'spotify', 'whatsapp'" },
+                      query: { type: Type.STRING, description: "The search query, website name, or message content." },
+                      target: { type: Type.STRING, description: "The target phone number for WhatsApp, if applicable." }
+                    },
+                    required: ["actionType", "query"]
+                  }
                 }
-              }
-            ]
-          }]
+              ]
+            }
+          ]
         },
         callbacks: {
           onopen: () => {
