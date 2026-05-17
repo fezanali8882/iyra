@@ -3,13 +3,17 @@ import { Mic, MicOff, Loader2, Volume2, VolumeX, Keyboard, Send, Trash2, ImagePl
 import { getIyraResponse, getIyraAudio, resetIyraSession } from "./services/geminiService";
 import { processCommand } from "./services/commandService";
 import { LiveSessionManager } from "./services/liveService";
-import { signIn, signOutUser, auth, User } from "./lib/firebase";
+import { signIn, signOutUser, auth, User, db } from "./lib/firebase";
 import { saveMessage, loadHistory, clearUserHistory, ChatMessage as HistoryMessage } from "./services/historyService";
 import { onAuthStateChanged } from "firebase/auth";
+import { doc, getDocFromServer, setDoc } from "firebase/firestore";
 import Visualizer from "./components/Visualizer";
 import PermissionModal from "./components/PermissionModal";
+import AuthModal from "./components/AuthModal";
+import MarketDashboard from "./components/market/MarketDashboard";
 import { playPCM } from "./utils/audioUtils";
 import { motion, AnimatePresence } from "motion/react";
+import { TrendingUp } from "lucide-react";
 
 type AppState = "idle" | "listening" | "processing" | "speaking";
 
@@ -29,7 +33,8 @@ declare global {
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
-  const [isSigningIn, setIsSigningIn] = useState(false);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [isMarketDashboardOpen, setIsMarketDashboardOpen] = useState(false);
   const [appState, setAppState] = useState<AppState>("idle");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const messagesRef = useRef(messages);
@@ -41,8 +46,24 @@ export default function App() {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
-      setIsAuthLoading(false);
       if (currentUser) {
+        // Ensure user document exists in Firestore (critical for Google login sync)
+        try {
+          const userDocRef = doc(db, 'users', currentUser.uid);
+          const userSnap = await getDocFromServer(userDocRef);
+          
+          if (!userSnap.exists()) {
+            await setDoc(userDocRef, {
+              displayName: currentUser.displayName || 'Anonymous',
+              email: currentUser.email || '',
+              ownerId: currentUser.uid,
+              createdAt: new Date().toISOString()
+            });
+          }
+        } catch (e) {
+          console.error("Error ensuring user profile:", e);
+        }
+
         const history = await loadHistory(currentUser.uid);
         if (history.length > 0) {
           setMessages(history.map(m => ({ id: m.id, sender: m.sender, text: m.text })));
@@ -50,6 +71,7 @@ export default function App() {
       } else {
         setMessages([]);
       }
+      setIsAuthLoading(false);
     });
     return () => unsubscribe();
   }, []);
@@ -241,6 +263,18 @@ export default function App() {
 
   return (
     <div className="h-[100dvh] w-screen bg-[#050505] text-white flex flex-col items-center justify-between font-sans relative overflow-hidden m-0 p-0">
+      <AuthModal 
+        isOpen={isAuthModalOpen} 
+        onClose={() => setIsAuthModalOpen(false)} 
+      />
+      <AnimatePresence>
+        {isMarketDashboardOpen && (
+          <MarketDashboard 
+            isOpen={isMarketDashboardOpen} 
+            onClose={() => setIsMarketDashboardOpen(false)} 
+          />
+        )}
+      </AnimatePresence>
       {showPermissionModal && (
         <PermissionModal 
           onClose={() => setShowPermissionModal(false)} 
@@ -284,6 +318,13 @@ export default function App() {
             </button>
           )}
           <button
+            onClick={() => setIsMarketDashboardOpen(true)}
+            className="p-2 rounded-full bg-white/5 hover:bg-violet-500/20 hover:text-violet-400 transition-colors border border-white/10"
+            title="Market Stats"
+          >
+            <TrendingUp size={18} className="opacity-70" />
+          </button>
+          <button
             onClick={() => setIsMuted(!isMuted)}
             className="p-2 rounded-full bg-white/5 hover:bg-white/10 transition-colors border border-white/10"
             title={isMuted ? "Unmute" : "Mute"}
@@ -303,32 +344,10 @@ export default function App() {
             </button>
           ) : (
             <button
-              onClick={async () => {
-                if (isSigningIn) return;
-                setIsSigningIn(true);
-                try {
-                  await signIn();
-                } catch (error: any) {
-                  if (error.code === 'auth/cancelled-popup-request' || error.code === 'auth/popup-closed-by-user') {
-                    console.log("Sign in cancelled by user or multiple requests.");
-                  } else {
-                    alert("Sign in failed: " + error.message);
-                  }
-                } finally {
-                  setIsSigningIn(false);
-                }
-              }}
-              disabled={isSigningIn}
-              className="px-3 py-1.5 text-xs rounded-full bg-pink-500 hover:bg-pink-600 transition-colors font-medium shadow-lg shadow-pink-500/20 disabled:opacity-50"
+              onClick={() => setIsAuthModalOpen(true)}
+              className="px-3 py-1.5 text-xs rounded-full bg-pink-500 hover:bg-pink-600 transition-colors font-medium shadow-lg shadow-pink-500/20"
             >
-              {isSigningIn ? (
-                <div className="flex items-center gap-1">
-                  <Loader2 size={12} className="animate-spin" />
-                  <span>Signing In...</span>
-                </div>
-              ) : (
-                "Sign In"
-              )}
+              Sign In
             </button>
           )}
         </div>

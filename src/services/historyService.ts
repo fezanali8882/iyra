@@ -8,7 +8,8 @@ import {
   Timestamp,
   doc,
   setDoc,
-  limit
+  limit,
+  where
 } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
 
@@ -72,6 +73,7 @@ export async function saveMessage(userId: string, sender: "user" | "iyra", text:
     await addDoc(collection(db, path), {
       sender,
       text,
+      ownerId: userId,
       timestamp: serverTimestamp()
     });
   } catch (error) {
@@ -84,8 +86,9 @@ export async function loadHistory(userId: string): Promise<ChatMessage[]> {
   try {
     const q = query(
       collection(db, path),
+      where("ownerId", "==", userId),
       orderBy("timestamp", "asc"),
-      limit(100) // Load last 100 messages for context
+      limit(100)
     );
     const querySnapshot = await getDocs(q);
     return querySnapshot.docs.map(doc => ({
@@ -99,14 +102,9 @@ export async function loadHistory(userId: string): Promise<ChatMessage[]> {
 }
 
 export async function clearUserHistory(userId: string) {
-  // Firestore doesn't support easy bulk delete on client, 
-  // but we can just stop showing them or delete them one by one if needed.
-  // For now, let's just use the current way which is resetting the UI, 
-  // and maybe later implement a "hidden" flag if we want soft delete.
-  // Actually, standard is to let them clear.
   const path = `users/${userId}/messages`;
   try {
-     const q = query(collection(db, path));
+     const q = query(collection(db, path), where("ownerId", "==", userId));
      const querySnapshot = await getDocs(q);
      // Note: In production apps, this should be done via cloud function for large collections
      const deletePromises = querySnapshot.docs.map(d => setDoc(d.ref, { deleted: true }, { merge: true }));

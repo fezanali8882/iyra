@@ -3,66 +3,27 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // 0. Global Safety Net
+    // Default deny
     match /{document=**} {
       allow read, write: if false;
     }
 
-    // --- Helper Functions ---
-    
-    function isSignedIn() {
-      return request.auth != null;
+    // Support for test connection
+    match /test/connection {
+      allow read: if true;
     }
 
     function isOwner(userId) {
-      return isSignedIn() && request.auth.uid == userId;
-    }
-
-    function isValidId(id) {
-      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
-    }
-
-    function incoming() {
-      return request.resource.data;
-    }
-
-    function existing() {
-      return resource.data;
-    }
-
-    // --- Validation Blueprints ---
-
-    function isValidMessage(data) {
-      return data.keys().hasAll(['sender', 'text', 'timestamp']) 
-        && data.keys().size() == 3
-        && data.sender in ['user', 'iyra']
-        && data.text is string 
-        && data.text.size() <= 10000
-        && data.timestamp == request.time;
-    }
-
-    function isValidUserProfile(data) {
-      return data.keys().hasAny(['displayName', 'email'])
-        && data.keys().size() <= 2
-        && (data.get('displayName', '') is string && data.get('displayName', '').size() <= 100)
-        && (data.get('email', '') is string && data.get('email', '').size() <= 255);
+      return request.auth != null && request.auth.uid == userId;
     }
 
     // --- Rules ---
 
-    // User Profiles
     match /users/{userId} {
-      allow get: if isOwner(userId);
-      allow create: if isOwner(userId) && isValidUserProfile(incoming());
-      allow update: if isOwner(userId) && isValidUserProfile(incoming());
+      allow read, write: if isOwner(userId);
       
-      // Messages Subcollection
       match /messages/{messageId} {
-        allow list: if isOwner(userId);
-        allow get: if isOwner(userId);
-        allow create: if isOwner(userId) && isValidId(messageId) && isValidMessage(incoming());
-        // Messages are usually immutable, but we might want to delete or maybe update (rarely)
-        allow delete: if isOwner(userId);
+        allow read, write: if isOwner(userId);
       }
     }
   }

@@ -7,9 +7,10 @@
       "properties": {
         "sender": { "type": "string", "enum": ["user", "iyra"] },
         "text": { "type": "string" },
+        "ownerId": { "type": "string" },
         "timestamp": { "type": "string", "format": "date-time" }
       },
-      "required": ["sender", "text", "timestamp"]
+      "required": ["sender", "text", "timestamp", "ownerId"]
     },
     "UserProfile": {
       "title": "User Profile",
@@ -17,7 +18,8 @@
       "type": "object",
       "properties": {
         "displayName": { "type": "string" },
-        "email": { "type": "string" }
+        "email": { "type": "string" },
+        "ownerId": { "type": "string" }
       }
     }
   },
