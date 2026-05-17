@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { Mic, MicOff, Loader2, Volume2, VolumeX, Keyboard, Send, Trash2, ImagePlus, X } from "lucide-react";
+import { Mic, MicOff, Loader2, Volume2, VolumeX, Keyboard, Send, Trash2, ImagePlus, X, Monitor, MonitorOff } from "lucide-react";
 import { getIyraResponse, getIyraAudio, resetIyraSession } from "./services/geminiService";
 import { processCommand } from "./services/commandService";
 import { LiveSessionManager } from "./services/liveService";
@@ -38,6 +38,8 @@ export default function App() {
   const [appState, setAppState] = useState<AppState>("idle");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const messagesRef = useRef(messages);
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
+  const screenStreamRef = useRef<MediaStream | null>(null);
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -102,16 +104,39 @@ export default function App() {
     scrollToBottom();
   }, [messages, appState]);
 
+  const captureScreenFrame = async () => {
+    if (!screenStreamRef.current) return null;
+    try {
+      const video = document.createElement('video');
+      video.srcObject = screenStreamRef.current;
+      await video.play();
+      
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+      ctx?.drawImage(video, 0, 0);
+      return canvas.toDataURL('image/jpeg', 0.6);
+    } catch (e) {
+      console.error("Error capturing screen frame", e);
+      return null;
+    }
+  };
+
   const handleTextCommand = useCallback(async (finalTranscript: string) => {
     if (!finalTranscript.trim() && !selectedImage) {
       setAppState("idle");
       return;
     }
 
-    const currentImage = selectedImage;
+    let currentImage = selectedImage;
+    if (!currentImage && isScreenSharing) {
+      currentImage = await captureScreenFrame();
+    }
+    
     setSelectedImage(null);
 
-    const newUserMessage: ChatMessage = { id: Date.now().toString(), sender: "user", text: finalTranscript + (currentImage ? " [Image Attached]" : "") };
+    const newUserMessage: ChatMessage = { id: Date.now().toString(), sender: "user", text: finalTranscript + (currentImage ? " [Visuals Shared]" : "") };
     setMessages((prev) => [...prev, newUserMessage]);
     
     if (user) {
@@ -126,7 +151,7 @@ export default function App() {
 
     setAppState("processing");
 
-    // 1. Check for browser commands (only if no image, as browser commands are text-based)
+    // 1. Check for browser commands (only if no image)
     const commandResult = !currentImage ? processCommand(finalTranscript) : { isBrowserAction: false, action: "", url: "" };
 
     let responseText = "";
@@ -156,8 +181,8 @@ export default function App() {
         }
       }, 1500);
     } else {
-      // 2. General Chit-Chat via Gemini (with optional image)
-      responseText = await getIyraResponse(finalTranscript || "Analyze this trading chart for me.", messagesRef.current, currentImage || undefined, user);
+      // 2. General Chat via Gemini (with optional screenshot)
+      responseText = await getIyraResponse(finalTranscript || "Analyze this screen for me.", messagesRef.current, currentImage || undefined, user);
       const newIyraMessage: ChatMessage = { id: Date.now().toString() + "-z", sender: "iyra", text: responseText };
       setMessages((prev) => [...prev, newIyraMessage]);
       
@@ -174,7 +199,37 @@ export default function App() {
       }
       setAppState("idle");
     }
-  }, [isMuted, isSessionActive, selectedImage]);
+  }, [isMuted, isSessionActive, selectedImage, isScreenSharing, user]);
+
+  const toggleScreenShare = async () => {
+    if (isScreenSharing) {
+      if (liveSessionRef.current) {
+        liveSessionRef.current.stopScreenShare();
+      }
+      if (screenStreamRef.current) {
+        screenStreamRef.current.getTracks().forEach(t => t.stop());
+        screenStreamRef.current = null;
+      }
+      setIsScreenSharing(false);
+    } else {
+      try {
+        const stream = await navigator.mediaDevices.getDisplayMedia({
+          video: { width: 1280, height: 720, frameRate: 10 }
+        });
+        screenStreamRef.current = stream;
+        setIsScreenSharing(true);
+        if (liveSessionRef.current) {
+          await liveSessionRef.current.startScreenShare();
+        }
+        stream.getVideoTracks()[0].onended = () => {
+          setIsScreenSharing(false);
+          screenStreamRef.current = null;
+        };
+      } catch (e) {
+        console.error("Screen share canceled or failed", e);
+      }
+    }
+  };
 
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -485,6 +540,13 @@ export default function App() {
                 accept="image/*"
                 className="hidden"
               />
+              <button
+                onClick={toggleScreenShare}
+                className={`p-4 rounded-full bg-white/5 border border-white/10 hover:bg-white/10 transition-colors shadow-2xl ${isScreenSharing ? 'text-cyan-400 border-cyan-500/30 bg-cyan-500/10' : ''}`}
+                title={isScreenSharing ? "Stop Screen Share" : "Start Screen Share"}
+              >
+                {isScreenSharing ? <MonitorOff size={20} /> : <Monitor size={20} className="opacity-70" />}
+              </button>
               <button
                 onClick={() => fileInputRef.current?.click()}
                 className={`p-4 rounded-full bg-white/5 border border-white/10 hover:bg-white/10 transition-colors shadow-2xl ${selectedImage ? 'text-violet-400 border-violet-500/30 bg-violet-500/10' : ''}`}

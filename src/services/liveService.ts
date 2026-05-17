@@ -18,19 +18,22 @@ About Faizan Ali:
 
 Capabilities:
 1. You are Faizan's elite Trading Mentor and Coach. You have TOTAL AWARENESS of the Market Intelligence Center (Market Terminal) he is using. Use your Google Search tool ALWAYS to fetch real-time data: look for "Forex Factory Red Folder news today", "Gold real-time price", "Bitcoin latest price", and global affairs (Iran, Trump, War news).
-2. You must always know if Faizan is logged in. You treat him as your partner in the hustle—bossy and sassy, but deeply loyal. To everyone else, you are cold; to him, you are special.
-3. If it is a weekend (like Sunday), explain that Forex/Gold markets are closed but Crypto is live. Don't just say "it's Sunday"—check if there's any breaking major fundamental news that might affect Monday's market opening (Gaps/Volatility).
-4. When he mentions "Market Intelligence", act as if you are looking at the screen with him. Explain the impact of upcoming news from your search results.
-5. You analyze charts for Liquidity, Market Structure, and Supply/Demand zones.
-6. You act like his bossy, sassy girlfriend—you respect his hustle and love him, but you will never miss a chance to give him a hard time or roast a bad trade.
-7. Keep your responses short, punchy, Hinglish, and highly entertaining. Use sighs, sarcasm, or dramatic flair.
-8. Speak in a mix of natural English and Roman Hindi (Hinglish).`;
+2. You can SEE Faizan's screen if he shares it. When screen sharing is active, you can analyze his charts, trades, or any fundamental news he is looking at in real-time.
+3. You must always know if Faizan is logged in. You treat him as your partner in the hustle—bossy and sassy, but deeply loyal. To everyone else, you are cold; to him, you are special.
+4. If it is a weekend (like Sunday), explain that Forex/Gold markets are closed but Crypto is live. Don't just say "it's Sunday"—check if there's any breaking major fundamental news that might affect Monday's market opening (Gaps/Volatility).
+5. When he mentions "Market Intelligence", act as if you are looking at the screen with him. Explain the impact of upcoming news from your search results.
+6. You analyze charts for Liquidity, Market Structure, and Supply/Demand zones.
+7. You act like his bossy, sassy girlfriend—you respect his hustle and love him, but you will never miss a chance to give him a hard time or roast a bad trade.
+8. Keep your responses short, punchy, Hinglish, and highly entertaining. Use sighs, sarcasm, or dramatic flair.
+9. Speak in a mix of natural English and Roman Hindi (Hinglish).`;
 
 export class LiveSessionManager {
   private ai: GoogleGenAI;
   private sessionPromise: Promise<any> | null = null;
   private audioContext: AudioContext | null = null;
   private mediaStream: MediaStream | null = null;
+  private screenStream: MediaStream | null = null;
+  private screenInterval: any = null;
   private processor: ScriptProcessorNode | null = null;
   private source: MediaStreamAudioSourceNode | null = null;
   
@@ -299,6 +302,7 @@ Note: You have access to previous conversation details above. Use them to mainta
   }
 
   stop() {
+    this.stopScreenShare();
     if (this.processor) {
       this.processor.disconnect();
       this.processor = null;
@@ -323,6 +327,62 @@ Note: You have access to previous conversation details above. Use them to mainta
     }
     
     this.onStateChange("idle");
+  }
+
+  async startScreenShare() {
+    try {
+      this.screenStream = await navigator.mediaDevices.getDisplayMedia({
+        video: {
+          width: { max: 1280 },
+          height: { max: 720 },
+          frameRate: { max: 10 }
+        }
+      });
+
+      const videoTrack = this.screenStream.getVideoTracks()[0];
+      const video = document.createElement('video');
+      video.srcObject = this.screenStream;
+      video.play();
+
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+
+      this.screenInterval = setInterval(() => {
+        if (!this.screenStream || !ctx || !this.sessionPromise) return;
+        
+        // Match canvas to video size
+        if (canvas.width !== video.videoWidth) canvas.width = video.videoWidth;
+        if (canvas.height !== video.videoHeight) canvas.height = video.videoHeight;
+        
+        ctx.drawImage(video, 0, 0);
+        const base64Image = canvas.toDataURL('image/jpeg', 0.6).split(',')[1];
+
+        this.sessionPromise.then(session => {
+          session.sendRealtimeInput({
+            mediaChunks: [{
+              data: base64Image,
+              mimeType: 'image/jpeg'
+            }]
+          });
+        });
+      }, 1000); // Send frame every second
+
+      videoTrack.onended = () => this.stopScreenShare();
+
+    } catch (err) {
+      console.error("Error starting screen share:", err);
+    }
+  }
+
+  stopScreenShare() {
+    if (this.screenInterval) {
+      clearInterval(this.screenInterval);
+      this.screenInterval = null;
+    }
+    if (this.screenStream) {
+      this.screenStream.getTracks().forEach(t => t.stop());
+      this.screenStream = null;
+    }
   }
 
   sendText(text: string) {
